@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Interview Coach</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+  body.auth-loading #authView,
+  body.auth-loading #appView {
+    display: none !important;
+  }
+</style>
+</head>
+<body class="auth-loading">
+
+<div id="authView" class="auth-shell">
+  <div class="auth-card">
+    <div class="brand-icon">AI</div>
+    <h1>AI Interview Coach</h1>
+    <p>Practice realistic interviews powered by Vertex AI Gemini.</p>
+
+    <label>Email</label>
+    <input id="email" type="email" placeholder="you@example.com">
+
+    <label>Password</label>
+    <input id="password" type="password" placeholder="Minimum 6 characters">
+
+    <button id="signInBtn" class="primary">Sign In</button>
+    <button id="createBtn" class="secondary">Create Account</button>
+
+    <div id="authError" class="error-text"></div>
+  </div>
+</div>
+
+<div id="appView" class="app-shell hidden">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon small">AI</div>
+      <div>
+        <strong>Interview Coach</strong>
+        <span>Powered by Gemini</span>
+      </div>
+    </div>
+
+    <label>Interview Topic</label>
+    <select id="topic">
+      <option>Performance Marketing</option>
+      <option>Google Ads</option>
+      <option>Meta Ads</option>
+      <option>GA4 & GTM</option>
+      <option>Digital Marketing</option>
+      <option>SEO</option>
+    </select>
+
+    <button id="newChatBtn" class="primary">+ New Interview</button>
+
+    <div class="sidebar-title">PREVIOUS INTERVIEWS</div>
+    <div id="chatList" class="chat-list"></div>
+
+    <div class="account-area">
+      <span id="userEmail"></span>
+      <button id="signOutBtn">Sign Out</button>
+    </div>
+  </aside>
+
+  <main class="main-panel">
+    <header>
+      <div>
+        <h2 id="chatTitle">AI Interview Coach</h2>
+        <p>Answer naturally. Gemini will evaluate your responses.</p>
+      </div>
+    </header>
+
+    <section id="messages" class="messages">
+      <div class="empty-state">
+        <div class="sparkle">✦</div>
+        <h2>Ready for your interview?</h2>
+        <p>Choose a topic and click New Interview.</p>
+      </div>
+    </section>
+
+    <footer class="composer">
+      <textarea id="messageInput" placeholder="Type your answer..." rows="1"></textarea>
+      <button id="sendBtn" class="primary send-button">Send</button>
+    </footer>
+  </main>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
