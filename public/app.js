@@ -92,7 +92,48 @@ function renderMessages(items) {
   messages.innerHTML = "";
 
   for (const item of items) {
+    if (
+      item.role === "assistant" &&
+      item.text.includes("Next Question:")
+    ) {
+      const parts = item.text.split("Next Question:");
+
+      const feedbackText = parts[0].trim();
+      const questionText = parts.slice(1).join("Next Question:").trim();
+
+      if (feedbackText) {
+        const feedbackRow = document.createElement("div");
+        feedbackRow.className = "message-row assistant-row";
+
+        feedbackRow.innerHTML = `
+          <div class="message assistant">
+            <span>AI Coach</span>
+            <div>${escapeHTML(feedbackText).replace(/\n/g, "<br>")}</div>
+          </div>
+        `;
+
+        messages.appendChild(feedbackRow);
+      }
+
+      if (questionText) {
+        const questionRow = document.createElement("div");
+        questionRow.className = "message-row assistant-row";
+
+        questionRow.innerHTML = `
+          <div class="message assistant next-question-card">
+            <span>AI Coach</span>
+            <div><strong>Next Question</strong><br>${escapeHTML(questionText).replace(/\n/g, "<br>")}</div>
+          </div>
+        `;
+
+        messages.appendChild(questionRow);
+      }
+
+      continue;
+    }
+
     const row = document.createElement("div");
+
     row.className =
       item.role === "user"
         ? "message-row user-row"
@@ -108,7 +149,12 @@ function renderMessages(items) {
     messages.appendChild(row);
   }
 
-  messages.scrollTop = messages.scrollHeight;
+  requestAnimationFrame(() => {
+    messages.scrollTo({
+      top: messages.scrollHeight,
+      behavior: "smooth"
+    });
+  });
 }
 
 async function loadChats() {
@@ -121,13 +167,103 @@ async function loadChats() {
   }
 
   data.chats.forEach(chat => {
-    const button = document.createElement("button");
-    button.className = "chat-item";
-    button.textContent = chat.title;
-    button.onclick = () => openChat(chat.id);
-    chatList.appendChild(button);
+   const wrapper = document.createElement("div");
+wrapper.className = "chat-item-wrapper";
+
+const button = document.createElement("button");
+button.className = "chat-item";
+button.textContent = chat.title;
+button.onclick = () => {
+  document.querySelectorAll(".chat-menu").forEach(menu => {
+    menu.classList.add("hidden");
+  });
+
+  openChat(chat.id);
+};
+
+const menuWrap = document.createElement("div");
+menuWrap.className = "chat-menu-wrap";
+
+const menuBtn = document.createElement("button");
+menuBtn.className = "chat-menu-btn";
+menuBtn.textContent = "⋮";
+menuBtn.title = "Manage interview";
+
+const menu = document.createElement("div");
+menu.className = "chat-menu hidden";
+
+const openItem = document.createElement("button");
+openItem.className = "chat-menu-item";
+openItem.innerHTML = `<span>Open</span>`;
+
+openItem.onclick = () => {
+  menu.classList.add("hidden");
+  openChat(chat.id);
+};
+
+const deleteItem = document.createElement("button");
+deleteItem.className = "chat-menu-item danger";
+deleteItem.innerHTML = `<span>Delete</span>`;
+
+deleteItem.onclick = () => {
+  menu.classList.add("hidden");
+  showDeleteModal(chat);
+};
+
+menuBtn.onclick = event => {
+  event.stopPropagation();
+
+  document
+    .querySelectorAll(".chat-menu")
+    .forEach(m => {
+      if (m !== menu) m.classList.add("hidden");
+    });
+
+  menu.classList.toggle("hidden");
+};
+
+menu.onclick = event => {
+  event.stopPropagation();
+};
+
+menu.appendChild(openItem);
+menu.appendChild(deleteItem);
+
+menuWrap.appendChild(menuBtn);
+menuWrap.appendChild(menu);
+
+wrapper.appendChild(button);
+wrapper.appendChild(menuWrap);
+
+chatList.appendChild(wrapper);
   });
 }
+let deleteTargetChat = null;
+
+function showDeleteModal(chat) {
+  deleteTargetChat = chat;
+
+  document.getElementById("deleteChatName").textContent = chat.title;
+
+  document
+    .getElementById("deleteModal")
+    .classList.remove("hidden");
+}
+
+function hideDeleteModal() {
+  deleteTargetChat = null;
+
+  document
+    .getElementById("deleteModal")
+    .classList.add("hidden");
+}
+
+document.addEventListener("click", () => {
+  document.querySelectorAll(".chat-menu").forEach(menu => {
+    menu.classList.add("hidden");
+  });
+});
+
 
 async function openChat(id) {
   currentChatId = id;
@@ -160,7 +296,11 @@ async function sendMessage() {
   if (!text) return;
 
   messageInput.value = "";
-  sendBtn.disabled = true;
+sendBtn.disabled = true;
+
+const originalButtonText = sendBtn.textContent;
+sendBtn.textContent = "Thinking...";
+messageInput.disabled = true;
 
   try {
     await api(`/api/chats/${currentChatId}/message`, {
@@ -173,6 +313,9 @@ async function sendMessage() {
     alert(error.message);
   } finally {
     sendBtn.disabled = false;
+    sendBtn.textContent = originalButtonText;
+  messageInput.disabled = false;
+  messageInput.focus();
   }
 }
 
@@ -181,6 +324,32 @@ createBtn.onclick = () => handleSignIn(true);
 newChatBtn.onclick = createInterview;
 sendBtn.onclick = sendMessage;
 signOutBtn.onclick = () => signOut(firebaseAuth);
+
+document.getElementById("cancelDeleteBtn").onclick = hideDeleteModal;
+
+document.getElementById("confirmDeleteBtn").onclick = async () => {
+  if (!deleteTargetChat) return;
+
+  try {
+    const chatId = deleteTargetChat.id;
+
+    await api(`/api/chats/${chatId}`, {
+      method: "DELETE"
+    });
+
+    if (currentChatId === chatId) {
+      currentChatId = null;
+      messages.innerHTML = "";
+      chatTitle.textContent = "AI Interview Coach";
+    }
+
+    hideDeleteModal();
+    await loadChats();
+
+  } catch (error) {
+    alert(error.message);
+  }
+};
 
 messageInput.addEventListener("keydown", event => {
   if (event.key === "Enter" && !event.shiftKey) {

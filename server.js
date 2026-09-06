@@ -1,19 +1,24 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+
 import {
   initializeApp,
   applicationDefault,
   getApps
 } from "firebase-admin/app";
+
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { GoogleAuth } from "google-auth-library";
 
 const PROJECT_ID = "ai-interview-coach-final";
-const LOCATION = "us-central1";
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.6-flash";
 const PORT = process.env.PORT || 8080;
+
+
+// --------------------------------------------------
+// FIREBASE INITIALIZATION
+// --------------------------------------------------
 
 if (!getApps().length) {
   initializeApp({
@@ -25,16 +30,23 @@ if (!getApps().length) {
 const db = getFirestore();
 const firebaseAuth = getAuth();
 
-const googleAuth = new GoogleAuth({
-  scopes: ["https://www.googleapis.com/auth/cloud-platform"]
-});
+
+// --------------------------------------------------
+// EXPRESS APP
+// --------------------------------------------------
 
 const app = express();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
+
+// --------------------------------------------------
+// HEALTH CHECK
+// --------------------------------------------------
 
 app.get("/health", (req, res) => {
   res.json({
@@ -44,7 +56,13 @@ app.get("/health", (req, res) => {
   });
 });
 
+
+// --------------------------------------------------
+// FIREBASE WEB CONFIG
+// --------------------------------------------------
+
 app.get("/api/config", (req, res) => {
+
   if (!process.env.FIREBASE_WEB_API_KEY) {
     return res.status(500).json({
       error: "Firebase configuration is unavailable."
@@ -61,153 +79,389 @@ app.get("/api/config", (req, res) => {
   });
 });
 
+
+// --------------------------------------------------
+// AUTHENTICATION MIDDLEWARE
+// --------------------------------------------------
+
 async function requireAuth(req, res, next) {
+
   try {
+
     const header = req.headers.authorization || "";
 
     if (!header.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Authentication required." });
+      return res.status(401).json({
+        error: "Authentication required."
+      });
     }
 
     const token = header.substring(7);
+
     req.user = await firebaseAuth.verifyIdToken(token);
+
     next();
+
   } catch (error) {
-    console.error("Authentication error:", error.message);
-    res.status(401).json({ error: "Invalid or expired session." });
+
+    console.error(
+      "Authentication error:",
+      error.message
+    );
+
+    res.status(401).json({
+      error: "Invalid or expired session."
+    });
   }
 }
 
+
+// --------------------------------------------------
+// FIRESTORE TIMESTAMP FORMATTER
+// --------------------------------------------------
+
 function formatTime(value) {
+
   try {
+
     return value?.toDate?.().toISOString() || null;
+
   } catch {
+
     return null;
   }
 }
 
-app.get("/api/chats", requireAuth, async (req, res) => {
-  try {
-    const snap = await db
-      .collection("users")
-      .doc(req.user.uid)
-      .collection("chats")
-      .orderBy("updatedAt", "desc")
-      .limit(30)
-      .get();
 
-    const chats = snap.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: formatTime(doc.data().createdAt),
-      updatedAt: formatTime(doc.data().updatedAt)
-    }));
+// --------------------------------------------------
+// LIST INTERVIEWS
+// --------------------------------------------------
 
-    res.json({ chats });
-  } catch (error) {
-    console.error("List chats error:", error);
-    res.status(500).json({ error: "Unable to load interviews." });
-  }
-});
+app.get(
+  "/api/chats",
+  requireAuth,
+  async (req, res) => {
 
-app.post("/api/chats", requireAuth, async (req, res) => {
-  try {
-    const topic = String(req.body.topic || "Performance Marketing").trim();
+    try {
 
-    const chatRef = db
-      .collection("users")
-      .doc(req.user.uid)
-      .collection("chats")
-      .doc();
+      const snap = await db
+        .collection("users")
+        .doc(req.user.uid)
+        .collection("chats")
+        .orderBy("updatedAt", "desc")
+        .limit(30)
+        .get();
 
-    const welcome =
-      `Welcome to your ${topic} interview. ` +
-      `Type "Start interview" when you're ready.`;
 
-    const batch = db.batch();
+      const chats = snap.docs.map(doc => ({
 
-    batch.set(chatRef, {
-      topic,
-      title: `${topic} Interview`,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp()
-    });
+        id: doc.id,
 
-    const messageRef = chatRef.collection("messages").doc();
+        ...doc.data(),
 
-    batch.set(messageRef, {
-      role: "assistant",
-      text: welcome,
-      createdAt: FieldValue.serverTimestamp()
-    });
+        createdAt:
+          formatTime(
+            doc.data().createdAt
+          ),
 
-    await batch.commit();
+        updatedAt:
+          formatTime(
+            doc.data().updatedAt
+          )
 
-    res.status(201).json({
-      id: chatRef.id,
-      topic,
-      title: `${topic} Interview`
-    });
-  } catch (error) {
-    console.error("Create chat error:", error);
-    res.status(500).json({ error: "Unable to create interview." });
-  }
-});
+      }));
 
-app.get("/api/chats/:chatId/messages", requireAuth, async (req, res) => {
-  try {
-    const chatRef = db
-      .collection("users")
-      .doc(req.user.uid)
-      .collection("chats")
-      .doc(req.params.chatId);
 
-    const chatDoc = await chatRef.get();
+      res.json({
+        chats
+      });
 
-    if (!chatDoc.exists) {
-      return res.status(404).json({ error: "Interview not found." });
+
+    } catch (error) {
+
+      console.error(
+        "List chats error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Unable to load interviews."
+      });
+
     }
 
-    const snap = await chatRef
-      .collection("messages")
-      .orderBy("createdAt", "asc")
-      .limit(100)
-      .get();
-
-    const messages = snap.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: formatTime(doc.data().createdAt)
-    }));
-
-    res.json({
-      chat: {
-        id: chatDoc.id,
-        ...chatDoc.data()
-      },
-      messages
-    });
-  } catch (error) {
-    console.error("Messages error:", error);
-    res.status(500).json({ error: "Unable to load messages." });
   }
-});
+);
 
-async function askGemini(topic, history) {
-  const accessToken = await googleAuth.getAccessToken();
 
-  if (!accessToken) {
-    throw new Error("Unable to obtain Vertex AI access token.");
+// --------------------------------------------------
+// CREATE NEW INTERVIEW
+// --------------------------------------------------
+
+app.post(
+  "/api/chats",
+  requireAuth,
+  async (req, res) => {
+
+    try {
+
+      const topic =
+        String(
+          req.body.topic ||
+          "Performance Marketing"
+        ).trim();
+
+
+      const chatRef = db
+        .collection("users")
+        .doc(req.user.uid)
+        .collection("chats")
+        .doc();
+
+
+      const welcome =
+        `Welcome to your ${topic} interview. ` +
+        `Type "Start interview" when you're ready.`;
+
+
+      const batch =
+        db.batch();
+
+
+      batch.set(
+        chatRef,
+        {
+
+          topic,
+
+          title:
+            `${topic} Interview`,
+
+          createdAt:
+            FieldValue.serverTimestamp(),
+
+          updatedAt:
+            FieldValue.serverTimestamp()
+
+        }
+      );
+
+
+      const messageRef =
+        chatRef
+          .collection("messages")
+          .doc();
+
+
+      batch.set(
+        messageRef,
+        {
+
+          role:
+            "assistant",
+
+          text:
+            welcome,
+
+          createdAt:
+            FieldValue.serverTimestamp()
+
+        }
+      );
+
+
+      await batch.commit();
+
+
+      res.status(201).json({
+
+        id:
+          chatRef.id,
+
+        topic,
+
+        title:
+          `${topic} Interview`
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "Create chat error:",
+        error
+      );
+
+
+      res.status(500).json({
+
+        error:
+          "Unable to create interview."
+
+      });
+
+    }
+
+  }
+);
+
+
+// --------------------------------------------------
+// LOAD INTERVIEW MESSAGES
+// --------------------------------------------------
+
+app.get(
+  "/api/chats/:chatId/messages",
+  requireAuth,
+  async (req, res) => {
+
+    try {
+
+      const chatRef = db
+        .collection("users")
+        .doc(req.user.uid)
+        .collection("chats")
+        .doc(req.params.chatId);
+
+
+      const chatDoc =
+        await chatRef.get();
+
+
+      if (!chatDoc.exists) {
+
+        return res
+          .status(404)
+          .json({
+
+            error:
+              "Interview not found."
+
+          });
+
+      }
+
+
+      const snap =
+        await chatRef
+          .collection("messages")
+          .orderBy(
+            "createdAt",
+            "asc"
+          )
+          .limit(100)
+          .get();
+
+
+      const messages =
+        snap.docs.map(doc => ({
+
+          id:
+            doc.id,
+
+          ...doc.data(),
+
+          createdAt:
+            formatTime(
+              doc.data().createdAt
+            )
+
+        }));
+
+
+      res.json({
+
+        chat: {
+
+          id:
+            chatDoc.id,
+
+          ...chatDoc.data()
+
+        },
+
+        messages
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "Messages error:",
+        error
+      );
+
+
+      res.status(500).json({
+
+        error:
+          "Unable to load messages."
+
+      });
+
+    }
+
+  }
+);
+
+
+// --------------------------------------------------
+// GEMINI AI STUDIO API
+// --------------------------------------------------
+
+async function askGemini(
+  topic,
+  history
+) {
+
+  const apiKey =
+    process.env.GEMINI_API_KEY;
+
+
+  if (!apiKey) {
+
+    throw new Error(
+      "Gemini API key is unavailable."
+    );
+
   }
 
-  const vertexContents = history
-    .filter(message => message.role === "user" || message.role === "assistant")
-    .map(message => ({
-      role: message.role === "assistant" ? "model" : "user",
-      parts: [{ text: message.text }]
-    }));
 
- const systemPrompt = `
+  const geminiContents =
+    history
+
+      .filter(
+        message =>
+          message.role === "user" ||
+          message.role === "assistant"
+      )
+
+      .map(
+        message => ({
+
+          role:
+            message.role === "assistant"
+              ? "model"
+              : "user",
+
+          parts: [
+
+            {
+              text:
+                message.text
+            }
+
+          ]
+
+        })
+      );
+
+
+  const systemPrompt = `
+
 You are an expert AI Interview Coach conducting a realistic interview for:
 "${topic}".
 
@@ -222,19 +476,19 @@ STRICT INTERVIEW FLOW:
 3. When the candidate gives a genuine answer:
    Respond in this exact structure:
 
-   Score: X/10
+Score: X/10
 
-   Strength:
-   One concise strength.
+Strength:
+One concise strength.
 
-   Improvement:
-   One concise improvement.
+Improvement:
+One concise improvement.
 
-   Better Answer:
-   Give a short improved example only when useful.
+Better Answer:
+Give a short improved example only when useful.
 
-   Next Question:
-   Question X: [next interview question]
+Next Question:
+Question X: [next interview question]
 
 4. ALWAYS include the next question at the END of the response after evaluating
    a genuine answer.
@@ -242,86 +496,387 @@ STRICT INTERVIEW FLOW:
 5. Keep the total evaluation concise so the next question is never omitted.
 
 6. If the candidate types:
+
    "next question"
    "skip"
    "skip question"
 
    then mark the current question as skipped and immediately ask the next question.
+
    Do not give a score for a skipped question.
 
 7. Never repeat the same question unless the candidate specifically asks you to repeat it.
 
 8. Progress through:
-   Basic → Intermediate → Advanced → Scenario-based questions.
+
+   Basic
+   →
+   Intermediate
+   →
+   Advanced
+   →
+   Scenario-based questions.
 
 9. Maintain question numbering throughout the interview.
 
 10. For Performance Marketing topics, include practical questions covering:
-    Google Ads, Meta Ads, GA4, GTM, conversion tracking, bidding,
-    attribution, optimization, lead quality and campaign strategy.
+
+    Google Ads
+    Meta Ads
+    GA4
+    GTM
+    Conversion Tracking
+    Bidding
+    Attribution
+    Optimization
+    Lead Quality
+    Campaign Strategy
 
 11. Never end an evaluation without either:
-    - asking the next question, or
+
+    - asking the next question
+
+    OR
+
     - clearly stating that the interview is complete.
 
 12. Keep each response concise and interview-focused.
+
 `;
 
-  const response = await fetch(
-    `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemPrompt }]
-        },
-        contents: vertexContents,
-        generationConfig: {
-          temperature: 0.45,
-          maxOutputTokens: 1000
-        }
-      })
-    }
-  );
 
-  const raw = await response.text();
+  const response =
+    await fetch(
+
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+
+      {
+
+        method:
+          "POST",
+
+
+        headers: {
+
+          "x-goog-api-key":
+            apiKey,
+
+          "Content-Type":
+            "application/json"
+
+        },
+
+
+        body:
+          JSON.stringify({
+
+            systemInstruction: {
+
+              parts: [
+
+                {
+                  text:
+                    systemPrompt
+                }
+
+              ]
+
+            },
+
+
+            contents:
+              geminiContents,
+
+
+            generationConfig: {
+
+              temperature:
+                0.45,
+
+              maxOutputTokens:
+                700,
+                thinkingConfig: {
+            thinkingLevel: "minimal"
+  }
+
+            }
+
+          })
+
+      }
+
+    );
+
+
+  const raw =
+    await response.text();
+
 
   if (!response.ok) {
-    console.error("Vertex AI HTTP error:", response.status, raw);
-    throw new Error(`Vertex AI request failed (${response.status}).`);
+
+    console.error(
+
+      "Gemini API HTTP error:",
+
+      response.status,
+
+      raw
+
+    );
+
+
+    throw new Error(
+
+      `Gemini API request failed (${response.status}).`
+
+    );
+
   }
 
-  const data = JSON.parse(raw);
 
-  const text = data.candidates?.[0]?.content?.parts
-    ?.map(part => part.text || "")
-    .join("")
-    .trim();
+  const data =
+    JSON.parse(raw);
+
+
+  const text =
+    data
+      .candidates?.[0]
+      ?.content
+      ?.parts
+
+      ?.map(
+        part =>
+          part.text || ""
+      )
+
+      .join("")
+
+      .trim();
+
 
   if (!text) {
-    console.error("Unexpected Vertex response:", raw);
-    throw new Error("Gemini returned an empty response.");
+
+    console.error(
+
+      "Unexpected Gemini API response:",
+
+      raw
+
+    );
+
+
+    throw new Error(
+
+      "Gemini returned an empty response."
+
+    );
+
   }
 
+
   return text;
+
 }
 
-app.post("/api/chats/:chatId/message", requireAuth, async (req, res) => {
+
+// --------------------------------------------------
+// SEND INTERVIEW ANSWER
+// --------------------------------------------------
+
+app.post(
+  "/api/chats/:chatId/message",
+  requireAuth,
+  async (req, res) => {
+
+    try {
+
+      const text =
+        String(
+          req.body.text || ""
+        ).trim();
+
+
+      if (!text) {
+
+        return res
+          .status(400)
+          .json({
+
+            error:
+              "Please enter an answer."
+
+          });
+
+      }
+
+
+      if (text.length > 6000) {
+
+        return res
+          .status(400)
+          .json({
+
+            error:
+              "Message is too long."
+
+          });
+
+      }
+
+
+      const chatRef = db
+        .collection("users")
+        .doc(req.user.uid)
+        .collection("chats")
+        .doc(req.params.chatId);
+
+
+      const chatDoc =
+        await chatRef.get();
+
+
+      if (!chatDoc.exists) {
+
+        return res
+          .status(404)
+          .json({
+
+            error:
+              "Interview not found."
+
+          });
+
+      }
+
+
+      await chatRef
+        .collection("messages")
+        .add({
+
+          role:
+            "user",
+
+          text,
+
+          createdAt:
+            FieldValue.serverTimestamp()
+
+        });
+
+
+      await chatRef.update({
+
+        updatedAt:
+          FieldValue.serverTimestamp()
+
+      });
+
+
+      const historySnap =
+        await chatRef
+
+          .collection("messages")
+
+          .orderBy(
+            "createdAt",
+            "desc"
+          )
+
+          .limit(20)
+
+          .get();
+
+
+      const history =
+        historySnap.docs
+
+          .map(
+            doc =>
+              doc.data()
+          )
+
+          .reverse();
+
+
+      const answer =
+        await askGemini(
+
+          chatDoc.data().topic,
+
+          history
+
+        );
+
+
+      const answerRef =
+        await chatRef
+
+          .collection("messages")
+
+          .add({
+
+            role:
+              "assistant",
+
+            text:
+              answer,
+
+            createdAt:
+              FieldValue.serverTimestamp()
+
+          });
+
+
+      await chatRef.update({
+
+        updatedAt:
+          FieldValue.serverTimestamp()
+
+      });
+
+
+      res.json({
+
+        message: {
+
+          id:
+            answerRef.id,
+
+          role:
+            "assistant",
+
+          text:
+            answer
+
+        }
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "Chat error:",
+        error
+      );
+
+
+      res.status(500).json({
+
+        error:
+          "AI Coach could not respond. Please try again."
+
+      });
+
+    }
+
+  }
+);
+
+// DELETE INTERVIEW
+
+app.delete("/api/chats/:chatId", requireAuth, async (req, res) => {
   try {
-    const text = String(req.body.text || "").trim();
-
-    if (!text) {
-      return res.status(400).json({ error: "Please enter an answer." });
-    }
-
-    if (text.length > 6000) {
-      return res.status(400).json({ error: "Message is too long." });
-    }
-
     const chatRef = db
       .collection("users")
       .doc(req.user.uid)
@@ -331,60 +886,72 @@ app.post("/api/chats/:chatId/message", requireAuth, async (req, res) => {
     const chatDoc = await chatRef.get();
 
     if (!chatDoc.exists) {
-      return res.status(404).json({ error: "Interview not found." });
+      return res.status(404).json({
+        error: "Interview not found."
+      });
     }
 
-    await chatRef.collection("messages").add({
-      role: "user",
-      text,
-      createdAt: FieldValue.serverTimestamp()
-    });
-
-    await chatRef.update({
-      updatedAt: FieldValue.serverTimestamp()
-    });
-
-    const historySnap = await chatRef
+    const messagesSnap = await chatRef
       .collection("messages")
-      .orderBy("createdAt", "desc")
-      .limit(20)
       .get();
 
-    const history = historySnap.docs
-      .map(doc => doc.data())
-      .reverse();
+    const batch = db.batch();
 
-    const answer = await askGemini(chatDoc.data().topic, history);
-
-    const answerRef = await chatRef.collection("messages").add({
-      role: "assistant",
-      text: answer,
-      createdAt: FieldValue.serverTimestamp()
+    messagesSnap.docs.forEach(doc => {
+      batch.delete(doc.ref);
     });
 
-    await chatRef.update({
-      updatedAt: FieldValue.serverTimestamp()
-    });
+    batch.delete(chatRef);
+
+    await batch.commit();
 
     res.json({
-      message: {
-        id: answerRef.id,
-        role: "assistant",
-        text: answer
-      }
+      success: true
     });
+
   } catch (error) {
-    console.error("Chat error:", error);
+    console.error("Delete interview error:", error);
+
     res.status(500).json({
-      error: "AI Coach could not respond. Please try again."
+      error: "Unable to delete interview."
     });
   }
 });
 
-app.get("*path", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
+// --------------------------------------------------
+// FRONTEND FALLBACK
+// --------------------------------------------------
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`AI Interview Coach running on port ${PORT}`);
-});
+app.get(
+  "*path",
+  (req, res) => {
+
+    res.sendFile(
+
+      path.join(
+        __dirname,
+        "public",
+        "index.html"
+      )
+
+    );
+
+  }
+);
+
+
+// --------------------------------------------------
+// START SERVER
+// --------------------------------------------------
+
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+
+    console.log(
+      `AI Interview Coach running on port ${PORT}`
+    );
+
+  }
+);
